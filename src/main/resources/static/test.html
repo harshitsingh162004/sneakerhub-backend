@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>SneakerHub WebSocket Test</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif}
+body{background:#0f0f0f;color:#f0f0f0;padding:24px}
+h1{font-size:20px;font-weight:500;margin-bottom:4px}
+.sub{font-size:13px;color:#888;margin-bottom:24px}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;margin-bottom:16px}
+.card h2{font-size:13px;font-weight:500;color:#aaa;margin-bottom:12px;text-transform:uppercase;letter-spacing:.05em}
+input{width:100%;background:#111;border:1px solid #333;border-radius:8px;padding:10px 12px;color:#f0f0f0;font-size:14px;margin-bottom:10px}
+button{width:100%;padding:10px;border-radius:8px;border:none;font-size:14px;font-weight:500;cursor:pointer;margin-bottom:8px}
+.btn-blue{background:#3b82f6;color:white}.btn-blue:hover{background:#2563eb}
+.btn-green{background:#10b981;color:white}.btn-green:hover{background:#059669}
+.btn-green:disabled{background:#1a3a2a;color:#444;cursor:not-allowed}
+.status{font-size:13px;padding:8px 12px;border-radius:8px;margin-bottom:10px}
+.ok{background:#052e16;color:#4ade80;border:1px solid #166534}
+.no{background:#1c1917;color:#78716c;border:1px solid #292524}
+.err{background:#2d0a0a;color:#f87171;border:1px solid #7f1d1d}
+.price{font-size:32px;font-weight:600;color:#10b981;margin:8px 0}
+.plabel{font-size:12px;color:#666}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.log{background:#111;border-radius:8px;padding:12px;height:200px;overflow-y:auto;font-family:monospace;font-size:12px}
+.lb{padding:3px 0;border-bottom:1px solid #1a1a1a}
+.lb.bid{color:#4ade80}.lb.info{color:#60a5fa}.lb.er{color:#f87171}
+</style>
+</head>
+<body>
+<h1>🔥 SneakerHub — Realtime Bidding Test</h1>
+<p class="sub">Open this in two tabs to simulate two users bidding against each other</p>
+
+<div class="card">
+  <h2>Step 1 — Login</h2>
+  <input id="email" value="raj@test.com"/>
+  <input id="password" type="password" value="123456"/>
+  <button class="btn-blue" onclick="login()">Login & Get Token</button>
+  <div id="ls" class="status no">Not logged in</div>
+</div>
+
+<div class="card">
+  <h2>Step 2 — Connect WebSocket</h2>
+  <button class="btn-blue" onclick="connect()" id="btnc" disabled>Connect to WebSocket</button>
+  <div id="ws" class="status no">● Disconnected</div>
+</div>
+
+<div class="card">
+  <h2>Live auction #1</h2>
+  <div class="plabel">Current highest bid</div>
+  <div class="price" id="price">₹ --</div>
+  <div class="grid">
+    <div>
+      <input id="amt" placeholder="Bid amount e.g. 6000" type="number"/>
+      <button class="btn-green" onclick="bid()" id="btnb" disabled>Place Bid</button>
+    </div>
+    <div>
+      <div style="font-size:12px;color:#666;margin-bottom:6px">Total bids</div>
+      <div style="font-size:28px;font-weight:600;color:#f59e0b" id="total">0</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Live bid feed</h2>
+  <div class="log" id="log"></div>
+</div>
+
+<script>
+let stomp=null, token=null;
+function log(m,t='info'){
+  const d=document.createElement('div');
+  d.className='lb '+t;
+  d.textContent='['+new Date().toLocaleTimeString()+'] '+m;
+  document.getElementById('log').prepend(d);
+}
+async function login(){
+  try{
+    const r=await fetch('/api/auth/login',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value})
+    });
+    const d=await r.json();
+    if(d.token){
+      token=d.token;
+      document.getElementById('ls').textContent='✅ Logged in as '+d.name+' ('+d.role+')';
+      document.getElementById('ls').className='status ok';
+      document.getElementById('btnc').disabled=false;
+      log('Logged in as '+d.name);
+    }
+  }catch(e){
+    document.getElementById('ls').textContent='❌ '+e.message;
+    document.getElementById('ls').className='status err';
+    log('Error: '+e.message,'er');
+  }
+}
+function connect(){
+  const s=new SockJS('/ws');
+  stomp=Stomp.over(s);
+  stomp.debug=null;
+  stomp.connect({'Authorization':'Bearer '+token},
+    function(){
+      document.getElementById('ws').textContent='● Connected!';
+      document.getElementById('ws').className='status ok';
+      document.getElementById('btnb').disabled=false;
+      log('WebSocket connected!');
+      stomp.subscribe('/topic/auction/2',function(m){
+        const b=JSON.parse(m.body);
+        document.getElementById('price').textContent='₹ '+b.newCurrentPrice.toLocaleString();
+        document.getElementById('total').textContent=b.totalBids;
+        log('🔥 '+b.bidderName+' bid ₹'+b.bidAmount+' → new price ₹'+b.newCurrentPrice,'bid');
+      });
+      log('Subscribed to auction #2 — waiting for bids...');
+    },
+    function(e){
+      document.getElementById('ws').textContent='● Failed: '+e;
+      document.getElementById('ws').className='status err';
+      log('WS error: '+e,'er');
+    }
+  );
+}
+function bid(){
+  const a=parseFloat(document.getElementById('amt').value);
+  if(!a){log('Enter amount','er');return;}
+  stomp.send('/app/bid',{},JSON.stringify({auctionId:2,bidAmount:a}));
+  log('Sent bid ₹'+a);
+  document.getElementById('amt').value='';
+}
+</script>
+</body>
+</html>
