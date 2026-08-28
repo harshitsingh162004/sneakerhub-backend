@@ -3,7 +3,7 @@ package com.sneakerhub.sneakerhub.controller;
 import com.sneakerhub.sneakerhub.dto.AuctionResponse;
 import com.sneakerhub.sneakerhub.dto.BidMessage;
 import com.sneakerhub.sneakerhub.dto.PlaceBidRequest;
-import com.sneakerhub.sneakerhub.repository.UserRepository;
+import com.sneakerhub.sneakerhub.security.JwtUtil;
 import com.sneakerhub.sneakerhub.service.AuctionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -18,27 +18,30 @@ public class WebSocketController {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final AuctionService auctionService;
-    private final UserRepository userRepository;
+    private final JwtUtil jwtUtil;
 
     @MessageMapping("/bid")
     public void placeBid(@Payload PlaceBidRequest request,
                          SimpMessageHeaderAccessor headerAccessor) {
 
-        // get email from session attributes set during handshake
-        String email = (String) headerAccessor.getSessionAttributes()
-                .get("email");
+        // extract JWT token from STOMP headers
+        String authHeader = (String) headerAccessor
+                .getSessionAttributes()
+                .getOrDefault("token", null);
 
-        // fallback — use first user if session attr not set
-        if (email == null) {
-            email = userRepository.findAll()
-                    .stream()
-                    .filter(u -> !u.getRole().equals("SELLER"))
-                    .findFirst()
-                    .map(u -> u.getEmail())
-                    .orElse(null);
+        String email = null;
+
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            if (jwtUtil.isValid(token)) {
+                email = jwtUtil.extractEmail(token);
+            }
         }
 
-        if (email == null) return;
+        if (email == null) {
+            System.out.println("WebSocket bid rejected — no valid token");
+            return;
+        }
 
         AuctionResponse response = auctionService.placeBid(request, email);
 
